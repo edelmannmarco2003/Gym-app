@@ -20,12 +20,18 @@
     { id: 'beine', label: 'Beine' },
     { id: 'gesaess', label: 'Gesäß' },
     { id: 'waden', label: 'Waden' },
+    { id: 'cardio', label: 'Cardio' },
     { id: 'sonstiges', label: 'Sonstiges' },
   ];
   const MUSCLE_IDS = new Set(MUSCLES.map((m) => m.id));
 
+  // What an entry of an exercise records:
+  //   weight – weight (kg) and repetitions      reps – repetitions only (e.g. push-ups)
+  //   cardio – duration (minutes) and, optionally, speed (km/h)
+  const TYPES = ['weight', 'reps', 'cardio'];
+
   const SAMPLE_EXERCISES = [
-    ['Bankdrücken', 'brust'], ['Schrägbankdrücken', 'brust'], ['Butterfly', 'brust'],
+    ['Bankdrücken', 'brust'], ['Schrägbankdrücken', 'brust'], ['Butterfly', 'brust'], ['Liegestütze', 'brust', 'reps'],
     ['Latzug', 'ruecken'], ['Klimmzüge', 'ruecken'], ['Rudern am Kabel', 'ruecken'], ['Kreuzheben', 'ruecken'],
     ['Schulterdrücken', 'schultern'], ['Seitheben', 'schultern'],
     ['Bizepscurls', 'bizeps'], ['Hammercurls', 'bizeps'],
@@ -34,6 +40,7 @@
     ['Kniebeugen', 'beine'], ['Beinpresse', 'beine'], ['Beinstrecker', 'beine'], ['Beinbeuger', 'beine'],
     ['Hip Thrust', 'gesaess'],
     ['Wadenheben', 'waden'],
+    ['Laufband', 'cardio', 'cardio'], ['Fahrrad-Ergometer', 'cardio', 'cardio'], ['Crosstrainer', 'cardio', 'cardio'],
   ];
 
   // ---------- dates (local calendar days as 'YYYY-MM-DD' keys) ----------
@@ -114,6 +121,22 @@
     return String(name).trim().replace(/\s+/g, ' ').slice(0, 60);
   }
 
+  // The values of one entry for the given exercise type, or null if they make no sense.
+  // Fields a type does not use are stored as 0 so that sums never see undefined.
+  function cleanEntry(type, raw) {
+    if (type === 'cardio') {
+      const minutes = Number(raw.minutes);
+      const speed = raw.speed == null || raw.speed === '' ? null : Number(raw.speed);
+      if (!Number.isFinite(minutes) || minutes <= 0) return null;
+      if (speed != null && (!Number.isFinite(speed) || speed <= 0)) return null;
+      return { weight: 0, reps: 0, minutes, speed };
+    }
+    const weight = type === 'reps' ? 0 : Number(raw.weight);
+    const reps = Number(raw.reps);
+    if (!Number.isFinite(weight) || weight < 0 || !Number.isInteger(reps) || reps < 1) return null;
+    return { weight, reps };
+  }
+
   // Validates untrusted data (storage or an imported file) and returns a clean state.
   // Throws when the overall shape is wrong; silently drops individual broken records.
   function normalize(raw) {
@@ -131,19 +154,20 @@
         id: e.id,
         name,
         muscle: MUSCLE_IDS.has(e.muscle) ? e.muscle : 'sonstiges',
+        type: TYPES.includes(e.type) ? e.type : 'weight', // data from before types existed is weight training
         createdAt: Number(e.createdAt) || 0,
       });
     }
+    const typeOf = new Map(exercises.map((e) => [e.id, e.type]));
     const sets = [];
     const setIds = new Set();
     for (const s of raw.sets) {
       if (!s || typeof s.id !== 'string' || !s.id || setIds.has(s.id)) continue;
       if (!exerciseIds.has(s.exerciseId) || !isDateKey(s.date)) continue;
-      const weight = Number(s.weight);
-      const reps = Number(s.reps);
-      if (!Number.isFinite(weight) || weight < 0 || !Number.isInteger(reps) || reps < 1) continue;
+      const values = cleanEntry(typeOf.get(s.exerciseId), s);
+      if (!values) continue;
       setIds.add(s.id);
-      sets.push({ id: s.id, exerciseId: s.exerciseId, date: s.date, weight, reps, ts: Number(s.ts) || 0 });
+      sets.push(Object.assign({ id: s.id, exerciseId: s.exerciseId, date: s.date, ts: Number(s.ts) || 0 }, values));
     }
     return { version: 1, exercises, sets };
   }
@@ -184,22 +208,25 @@
     return state.exercises.find((e) => e.id !== exceptId && e.name.toLowerCase() === needle) || null;
   }
 
-  function addExercise(state, { name, muscle }) {
+  function addExercise(state, { name, muscle, type }) {
     const exercise = {
       id: uid(),
       name: cleanName(name),
       muscle: MUSCLE_IDS.has(muscle) ? muscle : 'sonstiges',
+      type: TYPES.includes(type) ? type : 'weight',
       createdAt: Date.now(),
     };
     state.exercises.push(exercise);
     return exercise;
   }
 
-  function updateExercise(state, id, { name, muscle }) {
+  // The type can only change while the exercise has no entries: they would lose their meaning.
+  function updateExercise(state, id, { name, muscle, type }) {
     const exercise = getExercise(state, id);
     if (!exercise) return null;
     if (name != null) exercise.name = cleanName(name);
     if (muscle != null && MUSCLE_IDS.has(muscle)) exercise.muscle = muscle;
+    if (TYPES.includes(type) && !state.sets.some((s) => s.exerciseId === id)) exercise.type = type;
     return exercise;
   }
 
@@ -211,9 +238,9 @@
 
   function addSamples(state) {
     let added = 0;
-    for (const [name, muscle] of SAMPLE_EXERCISES) {
+    for (const [name, muscle, type] of SAMPLE_EXERCISES) {
       if (findExerciseByName(state, name)) continue;
-      addExercise(state, { name, muscle });
+      addExercise(state, { name, muscle, type });
       added++;
     }
     return added;
@@ -234,18 +261,22 @@
 
   const byTs = (a, b) => a.ts - b.ts;
 
-  function addSet(state, { exerciseId, date, weight, reps }) {
-    const set = { id: uid(), exerciseId, date, weight, reps, ts: Date.now() };
+  // `values` holds the fields of the exercise's type: { weight, reps }, { reps } or { minutes, speed }.
+  function addSet(state, { exerciseId, date }, values) {
+    const exercise = getExercise(state, exerciseId);
+    const clean = exercise && cleanEntry(exercise.type, values);
+    if (!clean) return null;
+    const set = Object.assign({ id: uid(), exerciseId, date, ts: Date.now() }, clean);
     state.sets.push(set);
     return set;
   }
 
-  function updateSet(state, id, { weight, reps }) {
+  function updateSet(state, id, values) {
     const set = state.sets.find((s) => s.id === id);
-    if (!set) return null;
-    set.weight = weight;
-    set.reps = reps;
-    return set;
+    const exercise = set && getExercise(state, set.exerciseId);
+    const clean = exercise && cleanEntry(exercise.type, values);
+    if (!clean) return null;
+    return Object.assign(set, clean);
   }
 
   function deleteSet(state, id) {
@@ -292,14 +323,19 @@
     }
     return [...byDate.keys()].sort().map((date) => {
       const sets = byDate.get(date).sort(byTs);
-      let maxWeight = 0, e1rm = 0, volume = 0, maxReps = 0;
+      let maxWeight = 0, e1rm = 0, volume = 0, maxReps = 0, totalReps = 0, minutes = 0, maxSpeed = 0, distance = 0;
       for (const s of sets) {
         maxWeight = Math.max(maxWeight, s.weight);
         e1rm = Math.max(e1rm, epley(s.weight, s.reps));
         volume += s.weight * s.reps;
         maxReps = Math.max(maxReps, s.reps);
+        totalReps += s.reps;
+        // cardio entries
+        minutes += s.minutes || 0;
+        maxSpeed = Math.max(maxSpeed, s.speed || 0);
+        distance += ((s.minutes || 0) / 60) * (s.speed || 0); // km, only where a speed was logged
       }
-      return { date, sets, maxWeight, e1rm, volume, maxReps };
+      return { date, sets, maxWeight, e1rm, volume, maxReps, totalReps, minutes, maxSpeed, distance };
     });
   }
 
@@ -438,7 +474,7 @@
   }
 
   return {
-    STORAGE_KEY, MUSCLES, SAMPLE_EXERCISES,
+    STORAGE_KEY, MUSCLES, TYPES, SAMPLE_EXERCISES,
     dateKey, todayKey, parseKey, isDateKey, addDays, diffDays, dayNumber, keyFromDayNumber,
     weekStart, isoWeek, addMonths,
     emptyState, normalize, load, save,

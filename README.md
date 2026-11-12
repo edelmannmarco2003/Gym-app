@@ -15,13 +15,15 @@ Die App ist eine reine Web-App ohne Server und ohne Build-Schritt. Alle Daten bl
 
 **Übungen**
 - Eigene Übungen anlegen, umbenennen, löschen
-- Sortiert nach Muskelgruppe (Brust, Rücken, Schultern, Bizeps, Trizeps, Unterarme, Bauch, Beine, Gesäß, Waden, Sonstiges), mit Filter
+- Sortiert nach Gruppe (Brust, Rücken, Schultern, Bizeps, Trizeps, Unterarme, Bauch, Beine, Gesäß, Waden, Cardio, Sonstiges); jede Gruppe ist ein aufklappbares Dropdown
+- Pro Übung wählbar, was eingetragen wird: Gewicht + Wiederholungen, nur Wiederholungen (z. B. Liegestütze) oder Zeit mit optionaler Geschwindigkeit (Cardio)
 - Optional: Startauswahl gängiger Übungen laden
 
 **Fortschritt**
 - Gym-Besuche: Ein Tag zählt, sobald der erste Satz eingetragen ist – diese Woche, dieser Monat, gesamt, Wochen in Folge
 - Monatskalender mit allen Trainingstagen und Besuche pro Woche als Diagramm
 - Leistung pro Übung als Verlauf: höchstes Gewicht, geschätztes 1RM (Epley-Formel), Volumen oder Wiederholungen; Zeitraum 4 Wochen bis alles
+- Bei Cardio stattdessen Zeit, Tempo und Strecke, bei reinen Wiederholungsübungen beste und gesamte Wiederholungen
 - Sätze pro Muskelgruppe
 
 **Daten & Backup** (Symbol oben rechts)

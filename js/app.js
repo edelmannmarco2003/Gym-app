@@ -47,8 +47,32 @@
   }
   const toInput = (n) => String(n).replace('.', ',');
 
-  // "60 kg × 10/9/8 · 65 kg × 6"
-  function summarizeSets(sets) {
+  // Entry fields per exercise type.
+  const FIELDS = {
+    weight: { label: 'Gewicht', unit: 'kg', step: 2.5, inputmode: 'decimal', min: 0, max: 1000, error: 'Bitte ein Gewicht in kg eintragen (0 für Körpergewicht).' },
+    reps: { label: 'Wiederholungen', unit: 'Wdh.', step: 1, inputmode: 'numeric', integer: true, min: 1, max: 1000, error: 'Bitte die Wiederholungen eintragen (mindestens 1).' },
+    minutes: { label: 'Zeit', unit: 'Min.', step: 1, inputmode: 'decimal', min: 0.5, max: 1440, error: 'Bitte die Zeit in Minuten eintragen.' },
+    speed: { label: 'Geschwindigkeit', unit: 'km/h', step: 0.5, inputmode: 'decimal', min: 0.1, max: 100, optional: true, error: 'Die Geschwindigkeit sieht nicht richtig aus – leer lassen, wenn du sie nicht brauchst.' },
+  };
+  const TYPE_FIELDS = { weight: ['weight', 'reps'], reps: ['reps'], cardio: ['minutes', 'speed'] };
+  const TYPE_LABELS = {
+    weight: 'Gewicht + Wiederholungen',
+    reps: 'Nur Wiederholungen',
+    cardio: 'Zeit (+ Geschwindigkeit)',
+  };
+  const TYPE_METRICS = { weight: ['weight', 'e1rm', 'volume', 'reps'], reps: ['reps', 'totalReps'], cardio: ['minutes', 'speed', 'distance'] };
+
+  // One entry as text: "60 kg × 10", "20 Wdh.", "30 Min. · 10 km/h"
+  function formatSet(type, s) {
+    if (type === 'cardio') return fmtNum(s.minutes) + ' Min.' + (s.speed ? ' · ' + fmtNum(s.speed) + ' km/h' : '');
+    if (type === 'reps') return s.reps + ' Wdh.';
+    return fmtNum(s.weight) + ' kg × ' + s.reps;
+  }
+
+  // "60 kg × 10/9/8 · 65 kg × 6", "20/15/12 Wdh.", "30 Min. · 10 km/h"
+  function summarizeSets(sets, type) {
+    if (type === 'cardio') return sets.map((s) => formatSet(type, s)).join(' + ');
+    if (type === 'reps') return sets.map((s) => s.reps).join('/') + ' Wdh.';
     const parts = [];
     for (const s of sets) {
       const last = parts[parts.length - 1];
@@ -75,6 +99,23 @@
     reps: {
       label: 'Wdh.', title: 'Meiste Wiederholungen in einem Satz',
       get: (s) => s.maxReps, fmt: (v) => nf0.format(v) + ' Wdh.', tick: (v) => nf0.format(v), integer: true,
+    },
+    totalReps: {
+      label: 'Gesamt', title: 'Wiederholungen pro Training insgesamt',
+      get: (s) => s.totalReps, fmt: (v) => nf0.format(v) + ' Wdh.', tick: (v) => nf0.format(v), integer: true,
+    },
+    minutes: {
+      label: 'Zeit', title: 'Zeit pro Training, in Minuten',
+      get: (s) => s.minutes, fmt: (v) => nf1.format(v) + ' Min.', tick: (v) => fmtNum(v),
+    },
+    // Speed and distance only exist for trainings where a speed was entered.
+    speed: {
+      label: 'Tempo', title: 'Höchste Geschwindigkeit pro Training, in km/h',
+      get: (s) => s.maxSpeed, has: (s) => s.maxSpeed > 0, fmt: (v) => nf1.format(v) + ' km/h', tick: (v) => fmtNum(v),
+    },
+    distance: {
+      label: 'Strecke', title: 'Strecke pro Training (Zeit × Geschwindigkeit), in km',
+      get: (s) => s.distance, has: (s) => s.maxSpeed > 0, fmt: (v) => nf2.format(v) + ' km', tick: (v) => fmtNum(v),
     },
   };
 
@@ -118,6 +159,7 @@
     close: '<path d="M18 6L6 18M6 6l12 12"/>',
     chevronLeft: '<path d="M15 18l-6-6 6-6"/>',
     chevronRight: '<path d="M9 18l6-6-6-6"/>',
+    chevronDown: '<path d="M6 9l6 6 6-6"/>',
     more: '<path d="M5 12h.01M12 12h.01M19 12h.01"/>',
     trash: '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/>',
     edit: '<path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/>',
@@ -158,9 +200,9 @@
     pending: {},             // "date|exerciseId" -> { weight, reps } typed but not logged yet
     calMonth: startDay.slice(0, 7),
     range: RANGES.some((r) => r.id === saved.range) ? saved.range : '3m',
-    metric: METRICS[saved.metric] ? saved.metric : 'weight',
+    metrics: Object.assign({ weight: 'weight', reps: 'reps', cardio: 'minutes' }, saved.metrics), // chosen chart metric per type
+    openGroups: new Set(),   // expanded muscle groups on the exercises tab
     progressExercise: saved.progressExercise || null,
-    muscleFilter: 'all',
     flashSet: null,
   };
   if (saved.drafts && Array.isArray(saved.drafts[startDay])) ui.drafts[startDay] = saved.drafts[startDay];
@@ -168,7 +210,7 @@
   function saveUi() {
     try {
       localStorage.setItem(UI_KEY, JSON.stringify({
-        drafts: ui.drafts, range: ui.range, metric: ui.metric, progressExercise: ui.progressExercise,
+        drafts: ui.drafts, range: ui.range, metrics: ui.metrics, progressExercise: ui.progressExercise,
       }));
     } catch (e) { /* view preferences are not essential */ }
   }
@@ -328,9 +370,9 @@
 
   // ---------- shared components ----------
 
-  function stepper({ label, unit, value, step, inputmode, onChange }) {
+  function stepper({ label, unit, value, step, inputmode, optional, onChange }) {
     const input = h('input', {
-      class: 'stepper-input', type: 'text', inputmode, value, placeholder: '–',
+      class: 'stepper-input', type: 'text', inputmode, value, placeholder: optional ? 'optional' : '–',
       'aria-label': label + ' (' + unit + ')', autocomplete: 'off', enterkeyhint: 'done',
     });
     const changed = () => {
@@ -352,20 +394,35 @@
     return { el, input };
   }
 
-  // Reads and checks a weight/reps pair; marks the offending field and returns null if invalid.
-  function readEntry(weightStepper, repsStepper) {
-    const weight = parseNum(weightStepper.input.value);
-    const reps = parseNum(repsStepper.input.value);
-    const badWeight = !(weight >= 0 && weight <= 1000);
-    const badReps = !(Number.isInteger(reps) && reps >= 1 && reps <= 1000);
-    weightStepper.el.classList.toggle('invalid', badWeight);
-    repsStepper.el.classList.toggle('invalid', badReps);
-    if (badWeight || badReps) {
-      (badWeight ? weightStepper : repsStepper).input.focus();
-      return { error: badWeight ? 'Bitte ein Gewicht in kg eintragen (0 für Körpergewicht).' : 'Bitte die Wiederholungen eintragen (mindestens 1).' };
-    }
-    return { weight, reps };
+  // Steppers for all fields of an exercise type. `initial` maps field -> text.
+  function entrySteppers(type, initial, onChange) {
+    return TYPE_FIELDS[type].map((key) => Object.assign({ key }, stepper(Object.assign({}, FIELDS[key], {
+      value: initial[key] != null ? initial[key] : '',
+      onChange: onChange ? (v) => onChange(key, v) : null,
+    }))));
   }
+
+  // Reads and checks the fields; marks the first offending one and returns { error } if invalid.
+  function readEntry(steppers) {
+    const values = {};
+    let error = null;
+    for (const st of steppers) {
+      const f = FIELDS[st.key];
+      const text = st.input.value.trim();
+      const n = parseNum(text);
+      const empty = text === '' || (f.optional && n === 0);
+      const bad = empty ? !f.optional : !(n >= f.min && n <= f.max && (!f.integer || Number.isInteger(n)));
+      st.el.classList.toggle('invalid', bad);
+      if (bad && !error) {
+        error = f.error;
+        st.input.focus();
+      }
+      values[st.key] = empty ? null : n;
+    }
+    return error ? { error } : { values };
+  }
+
+  const toInputs = (type, set) => Object.fromEntries(TYPE_FIELDS[type].map((k) => [k, set[k] == null ? '' : toInput(set[k])]));
 
   function chipButton(label, pressed, onClick, focusKey, disabled) {
     return h('button', {
@@ -447,9 +504,10 @@
       h('span', null, h('strong', null, 'Gym-Besuch gezählt'), ' · ' + n + '. Besuch der Woche'));
   }
 
-  function logSet(exerciseId, date, weight, reps) {
+  function logSet(exerciseId, date, values) {
     const firstOfDay = !S.hasVisit(state, date);
-    const set = S.addSet(state, { exerciseId, date, weight, reps });
+    const set = S.addSet(state, { exerciseId, date }, values);
+    if (!set) return;
     delete ui.pending[date + '|' + exerciseId];
     removeDraft(date, exerciseId);
     ui.flashSet = set.id;
@@ -466,7 +524,7 @@
     // Keep the exercise card on the day even if this was its only set.
     if (!state.sets.some((s) => s.exerciseId === set.exerciseId && s.date === set.date)) addToDay(set.date, [set.exerciseId]);
     commit();
-    toast('Satz gelöscht', {
+    toast('Eintrag gelöscht', {
       action: 'Rückgängig',
       onAction: () => {
         if (S.restoreSet(state, set)) {
@@ -478,25 +536,24 @@
   }
 
   function openSetEditor(set, exercise, number) {
-    const weight = stepper({ label: 'Gewicht', unit: 'kg', value: toInput(set.weight), step: 2.5, inputmode: 'decimal' });
-    const reps = stepper({ label: 'Wiederholungen', unit: 'Wdh.', value: String(set.reps), step: 1, inputmode: 'numeric' });
+    const steppers = entrySteppers(exercise.type, toInputs(exercise.type, set));
     const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
     const form = h('form', {
       class: 'form', novalidate: true,
       onsubmit: (e) => {
         e.preventDefault();
-        const entry = readEntry(weight, reps);
+        const entry = readEntry(steppers);
         if (entry.error) {
           error.textContent = entry.error;
           error.hidden = false;
           return;
         }
-        S.updateSet(state, set.id, entry);
+        S.updateSet(state, set.id, entry.values);
         closeSheet();
         commit();
       },
     },
-      h('div', { class: 'entry-fields' }, weight.el, reps.el),
+      h('div', { class: 'entry-fields' + (steppers.length === 1 ? ' is-single' : '') }, steppers.map((st) => st.el)),
       error,
       h('button', { class: 'btn btn-primary btn-block', type: 'submit' }, 'Speichern'),
       h('button', {
@@ -505,8 +562,8 @@
           closeSheet();
           removeSet(set);
         },
-      }, 'Satz löschen'));
-    openSheet(exercise.name + ' · Satz ' + number, form);
+      }, 'Eintrag löschen'));
+    openSheet(exercise.name + ' · ' + (exercise.type === 'cardio' ? 'Eintrag ' : 'Satz ') + number, form);
   }
 
   function openCardMenu(exercise, sets, date) {
@@ -519,7 +576,7 @@
         if (sets.length) {
           const yes = await confirmDialog({
             title: 'Einträge löschen?',
-            text: plural(sets.length, 'Satz', 'Sätze') + ' von „' + exercise.name + '“ am ' + fmtDate('short', date) + ' werden gelöscht.',
+            text: plural(sets.length, 'Eintrag', 'Einträge') + ' von „' + exercise.name + '“ am ' + fmtDate('short', date) + ' werden gelöscht.',
             ok: 'Löschen', danger: true,
           });
           if (!yes) return;
@@ -537,20 +594,19 @@
     const last = S.lastSessionBefore(state, exercise.id, date);
     // Start from the previous set; on the first set of the day from last time's first set.
     const base = sets.length ? sets[sets.length - 1] : last ? last.sets[0] : null;
-    const pending = ui.pending[key] || {};
-    const remember = (field) => (v) => {
+    const type = exercise.type;
+    const noun = type === 'cardio' ? 'Eintrag' : 'Satz';
+    const initial = Object.assign(base ? toInputs(type, base) : {}, ui.pending[key]);
+    const steppers = entrySteppers(type, initial, (field, v) => {
       (ui.pending[key] = ui.pending[key] || {})[field] = v;
+    });
+    const setValue = (s) => {
+      if (type === 'cardio') {
+        return [h('b', null, fmtNum(s.minutes)), ' Min.', s.speed ? [h('span', { class: 'set-x' }, '·'), h('b', null, fmtNum(s.speed)), ' km/h'] : null];
+      }
+      if (type === 'reps') return [h('b', null, s.reps), ' Wdh.'];
+      return [h('b', null, fmtNum(s.weight)), ' kg', h('span', { class: 'set-x' }, '×'), h('b', null, s.reps), ' Wdh.'];
     };
-    const weight = stepper({
-      label: 'Gewicht', unit: 'kg', step: 2.5, inputmode: 'decimal',
-      value: pending.weight != null ? pending.weight : base ? toInput(base.weight) : '',
-      onChange: remember('weight'),
-    });
-    const reps = stepper({
-      label: 'Wiederholungen', unit: 'Wdh.', step: 1, inputmode: 'numeric',
-      value: pending.reps != null ? pending.reps : base ? String(base.reps) : '',
-      onChange: remember('reps'),
-    });
     const recordId = S.prSetId(state, exercise.id, date);
     const muscle = S.MUSCLES.find((m) => m.id === exercise.muscle);
 
@@ -563,31 +619,31 @@
           class: 'icon-btn', type: 'button', 'aria-label': 'Mehr zu ' + exercise.name,
           onclick: () => openCardMenu(exercise, sets, date),
         }, icon('more', 22))),
-      last ? h('p', { class: 'last-time' }, h('span', null, 'Letztes Mal · ' + fmtDate('short', last.date) + ': '), summarizeSets(last.sets)) : null,
+      last ? h('p', { class: 'last-time' }, h('span', null, 'Letztes Mal · ' + fmtDate('short', last.date) + ': '), summarizeSets(last.sets, type)) : null,
       sets.length ? h('ol', { class: 'sets' }, sets.map((s, i) =>
         h('li', { class: 'set' + (s.id === ui.flashSet ? ' flash' : '') },
           h('button', {
             class: 'set-main', type: 'button', onclick: () => openSetEditor(s, exercise, i + 1),
-            'aria-label': 'Satz ' + (i + 1) + ': ' + fmtNum(s.weight) + ' kg, ' + s.reps + ' Wiederholungen – bearbeiten',
+            'aria-label': noun + ' ' + (i + 1) + ': ' + formatSet(type, s) + ' – bearbeiten',
           },
             h('span', { class: 'set-no' }, i + 1),
-            h('span', { class: 'set-val' }, h('b', null, fmtNum(s.weight)), ' kg', h('span', { class: 'set-x' }, '×'), h('b', null, s.reps), ' Wdh.'),
+            h('span', { class: 'set-val' }, setValue(s)),
             s.id === recordId ? h('span', { class: 'badge' }, icon('star', 12), h('span', { class: 'badge-text' }, 'Rekord')) : null),
           h('button', {
-            class: 'icon-btn set-del', type: 'button', 'aria-label': 'Satz ' + (i + 1) + ' löschen',
+            class: 'icon-btn set-del', type: 'button', 'aria-label': noun + ' ' + (i + 1) + ' löschen',
             onclick: () => removeSet(s),
           }, icon('close', 18))))) : null,
       h('form', {
         class: 'entry', novalidate: true,
         onsubmit: (e) => {
           e.preventDefault();
-          const entry = readEntry(weight, reps);
+          const entry = readEntry(steppers);
           if (entry.error) toast(entry.error);
-          else logSet(exercise.id, date, entry.weight, entry.reps);
+          else logSet(exercise.id, date, entry.values);
         },
       },
-        h('div', { class: 'entry-fields' }, weight.el, reps.el),
-        h('button', { class: 'btn btn-primary btn-block', type: 'submit' }, icon('check'), 'Satz ' + (sets.length + 1) + ' eintragen')));
+        h('div', { class: 'entry-fields' + (steppers.length === 1 ? ' is-single' : '') }, steppers.map((st) => st.el)),
+        h('button', { class: 'btn btn-primary btn-block', type: 'submit' }, icon('check'), noun + ' ' + (sets.length + 1) + ' eintragen')));
   }
 
   function openExercisePicker() {
@@ -687,10 +743,25 @@
   }
 
   function openExerciseForm({ exercise, presetMuscle, onSaved }) {
-    const current = exercise ? exercise.muscle : presetMuscle || null;
+    const hasEntries = !!exercise && state.sets.some((st) => st.exerciseId === exercise.id);
     const name = h('input', {
       class: 'input', id: 'exercise-name', type: 'text', maxlength: '60', placeholder: 'z. B. Bankdrücken',
       value: exercise ? exercise.name : '', autocomplete: 'off', autocapitalize: 'sentences', enterkeyhint: 'done',
+    });
+    const muscle = h('select', { class: 'input select', id: 'exercise-muscle' },
+      h('option', { value: '' }, 'Bitte wählen …'),
+      S.MUSCLES.map((m) => h('option', { value: m.id }, m.label)));
+    muscle.value = exercise ? exercise.muscle : presetMuscle || '';
+    const type = h('select', { class: 'input select', id: 'exercise-type', disabled: hasEntries },
+      S.TYPES.map((t) => h('option', { value: t }, TYPE_LABELS[t])));
+    type.value = exercise ? exercise.type : muscle.value === 'cardio' ? 'cardio' : 'weight';
+    // Picking the Cardio group suggests the matching kind of entry until the user chooses one.
+    let typeTouched = !!exercise;
+    type.addEventListener('change', () => {
+      typeTouched = true;
+    });
+    muscle.addEventListener('change', () => {
+      if (!typeTouched) type.value = muscle.value === 'cardio' ? 'cardio' : 'weight';
     });
     const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
     const fail = (message, focusEl) => {
@@ -702,13 +773,13 @@
       class: 'form', novalidate: true,
       onsubmit: (e) => {
         e.preventDefault();
-        const picked = form.querySelector('input[name="muscle"]:checked');
         const cleanName = name.value.trim().replace(/\s+/g, ' ');
         if (!cleanName) return fail('Bitte gib der Übung einen Namen.', name);
-        if (!picked) return fail('Bitte wähle eine Muskelgruppe.');
+        if (!muscle.value) return fail('Bitte wähle eine Gruppe.', muscle);
         if (S.findExerciseByName(state, cleanName, exercise && exercise.id)) return fail('Eine Übung mit diesem Namen gibt es schon.', name);
-        const data = { name: cleanName, muscle: picked.value };
+        const data = { name: cleanName, muscle: muscle.value, type: type.value };
         const result = exercise ? S.updateExercise(state, exercise.id, data) : S.addExercise(state, data);
+        ui.openGroups.add(result.muscle);
         if (onSaved) onSaved(result);
         closeSheet();
         commit();
@@ -716,13 +787,9 @@
       },
     },
       h('div', { class: 'field' }, h('label', { for: 'exercise-name' }, 'Name'), name),
-      h('fieldset', { class: 'field' },
-        h('legend', null, 'Muskelgruppe'),
-        h('div', { class: 'chips chips-wrap' }, S.MUSCLES.map((m) => {
-          const radio = h('input', { type: 'radio', name: 'muscle', value: m.id });
-          radio.checked = m.id === current;
-          return h('label', { class: 'chip-radio' }, radio, h('span', null, m.label));
-        }))),
+      h('div', { class: 'field' }, h('label', { for: 'exercise-muscle' }, 'Gruppe'), muscle),
+      h('div', { class: 'field' }, h('label', { for: 'exercise-type' }, 'Was trägst du ein?'), type,
+        hasEntries ? h('p', { class: 'muted' }, 'Lässt sich nicht mehr ändern, weil es schon Einträge gibt.') : null),
       error,
       h('button', { class: 'btn btn-primary btn-block', type: 'submit' }, exercise ? 'Speichern' : 'Übung anlegen'));
     openSheet(exercise ? 'Übung bearbeiten' : 'Neue Übung', form);
@@ -732,7 +799,11 @@
   function openExerciseDetail(exercise) {
     const sessions = S.exerciseSessions(state, exercise.id);
     const muscle = S.MUSCLES.find((m) => m.id === exercise.muscle);
-    const best = sessions.reduce((max, s) => Math.max(max, s.maxWeight), 0);
+    const type = exercise.type;
+    const bestOf = (get) => sessions.reduce((max, s) => Math.max(max, get(s)), 0);
+    const best = type === 'cardio' ? fmtNum(bestOf((s) => s.minutes)) + ' Min.'
+      : type === 'reps' ? bestOf((s) => s.maxReps) + ' Wdh.'
+        : fmtNum(bestOf((s) => s.maxWeight)) + ' kg';
     const setCount = sessions.reduce((n, s) => n + s.sets.length, 0);
     const today = S.todayKey();
 
@@ -740,10 +811,10 @@
       h('span', { class: 'muscle-tag' }, muscle.label),
       h('div', { class: 'kpis kpis-3' },
         kpi('Trainings', sessions.length),
-        kpi('Bestwert', sessions.length ? fmtNum(best) + ' kg' : '–'),
+        kpi('Bestwert', sessions.length ? best : '–'),
         kpi('Zuletzt', sessions.length ? fmtDate('tick', sessions[sessions.length - 1].date) : '–')),
       sessions.length ? h('ul', { class: 'history' }, sessions.slice(-4).reverse().map((s) =>
-        h('li', null, h('span', { class: 'history-date' }, fmtDate('short', s.date)), h('span', null, summarizeSets(s.sets))))) : null,
+        h('li', null, h('span', { class: 'history-date' }, fmtDate('short', s.date)), h('span', null, summarizeSets(s.sets, type))))) : null,
       h('div', { class: 'menu' },
         h('button', {
           class: 'btn btn-primary btn-block', type: 'button',
@@ -758,12 +829,12 @@
           closeSheet();
           showProgress(exercise.id);
         }) : null,
-        menuItem('edit', 'Name oder Muskelgruppe ändern', () => openExerciseForm({ exercise })),
+        menuItem('edit', 'Übung bearbeiten', () => openExerciseForm({ exercise })),
         menuItem('trash', 'Übung löschen', async () => {
           const yes = await confirmDialog({
             title: '„' + exercise.name + '“ löschen?',
             text: setCount
-              ? 'Die Übung und ihre ' + plural(setCount, 'eingetragene Satz', 'eingetragenen Sätze') + ' werden endgültig gelöscht.'
+              ? 'Die Übung und ihre ' + plural(setCount, 'Eintrag', 'Einträge') + ' werden endgültig gelöscht.'
               : 'Die Übung wird gelöscht.',
             ok: 'Löschen', danger: true,
           });
@@ -788,36 +859,35 @@
           h('button', { class: 'btn btn-primary btn-block', type: 'button', onclick: () => openExerciseForm({}) }, icon('plus'), 'Neue Übung anlegen'),
           h('button', { class: 'btn btn-secondary btn-block', type: 'button', onclick: loadSamples }, 'Beispielübungen laden')));
     }
-    const filter = groups.some((g) => g.muscle.id === ui.muscleFilter) ? ui.muscleFilter : 'all';
-    const shown = filter === 'all' ? groups : groups.filter((g) => g.muscle.id === filter);
     const summary = S.summaries(state);
-    const setFilter = (id) => () => {
-      ui.muscleFilter = id;
-      render();
-    };
 
     return h('div', { class: 'view' },
       h('div', { class: 'view-head' },
         h('h1', null, 'Übungen'),
-        h('button', {
-          class: 'btn btn-primary btn-sm', type: 'button',
-          onclick: () => openExerciseForm({ presetMuscle: filter === 'all' ? null : filter }),
-        }, icon('plus', 18), 'Neue Übung')),
-      h('div', { class: 'chips', role: 'group', 'aria-label': 'Nach Muskelgruppe filtern' },
-        chipButton('Alle ' + total, filter === 'all', setFilter('all'), 'muscle-all'),
-        groups.map((g) => chipButton(g.muscle.label + ' ' + g.exercises.length, filter === g.muscle.id, setFilter(g.muscle.id), 'muscle-' + g.muscle.id))),
-      shown.map((g) => h('section', { class: 'group' },
-        h('h2', { class: 'group-title' }, g.muscle.label),
-        h('div', { class: 'rows' }, g.exercises.map((ex) => {
-          const sum = summary.get(ex.id);
-          return h('button', { class: 'row', type: 'button', onclick: () => openExerciseDetail(ex) },
-            h('span', { class: 'row-text' },
-              h('span', { class: 'row-title' }, ex.name),
-              h('span', { class: 'row-sub' }, sum
-                ? 'Zuletzt ' + fmtDate('short', sum.lastDate) + ' · ' + fmtNum(sum.lastTop.weight) + ' kg × ' + sum.lastTop.reps
-                : 'Noch nicht trainiert')),
-            icon('chevronRight', 18));
-        })))));
+        h('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: () => openExerciseForm({}) }, icon('plus', 18), 'Neue Übung')),
+      // One dropdown per group; they remember whether they are open.
+      groups.map((g) => {
+        const details = h('details', { class: 'group-drop', open: ui.openGroups.has(g.muscle.id) },
+          h('summary', { 'data-fk': 'group-' + g.muscle.id },
+            h('span', { class: 'group-name' }, g.muscle.label),
+            h('span', { class: 'group-count' }, g.exercises.length),
+            icon('chevronDown', 20)),
+          h('div', { class: 'rows' }, g.exercises.map((ex) => {
+            const sum = summary.get(ex.id);
+            return h('button', { class: 'row', type: 'button', onclick: () => openExerciseDetail(ex) },
+              h('span', { class: 'row-text' },
+                h('span', { class: 'row-title' }, ex.name),
+                h('span', { class: 'row-sub' }, sum
+                  ? 'Zuletzt ' + fmtDate('short', sum.lastDate) + ' · ' + formatSet(ex.type, sum.lastTop)
+                  : 'Noch nicht trainiert')),
+              icon('chevronRight', 18));
+          })));
+        details.addEventListener('toggle', () => {
+          if (details.open) ui.openGroups.add(g.muscle.id);
+          else ui.openGroups.delete(g.muscle.id);
+        });
+        return details;
+      }));
   }
 
   // ---------- progress tab ----------
@@ -890,11 +960,15 @@
     const exercise = currentProgressExercise();
     const from = range.days ? S.addDays(today, -(range.days - 1)) : null;
     const all = S.exerciseSessions(state, exercise.id);
-    const sessions = from ? all.filter((s) => s.date >= from) : all;
-    // Exercises only ever logged with 0 kg have no weight curve: show repetitions instead.
-    const bodyweightOnly = all.length > 0 && all.every((s) => s.maxWeight === 0);
-    const metricId = bodyweightOnly ? 'reps' : ui.metric;
+    const type = exercise.type;
+    const metricIds = TYPE_METRICS[type];
+    // Weight exercises only ever logged with 0 kg have no weight curve: show repetitions instead.
+    const bodyweightOnly = type === 'weight' && all.length > 0 && all.every((s) => s.maxWeight === 0);
+    const chosen = metricIds.includes(ui.metrics[type]) ? ui.metrics[type] : metricIds[0];
+    const metricId = bodyweightOnly ? 'reps' : chosen;
     const metric = METRICS[metricId];
+    const inRange = from ? all.filter((s) => s.date >= from) : all;
+    const sessions = metric.has ? inRange.filter(metric.has) : inRange;
 
     const select = h('select', { class: 'input select', 'aria-label': 'Übung', 'data-fk': 'progress-exercise' },
       S.groupedExercises(state).map((g) => h('optgroup', { label: g.muscle.label },
@@ -906,17 +980,19 @@
     });
 
     const metricChips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Messwert' },
-      Object.keys(METRICS).map((id) => chipButton(METRICS[id].label, id === metricId, () => {
-        ui.metric = id;
+      metricIds.map((id) => chipButton(METRICS[id].label, id === metricId, () => {
+        ui.metrics[type] = id;
         saveUi();
         render();
       }, 'metric-' + id, bodyweightOnly && id !== 'reps')));
 
     let content;
     if (!sessions.length) {
-      content = h('p', { class: 'chart-empty' }, all.length
-        ? 'Keine Einträge im gewählten Zeitraum – wähle oben einen längeren.'
-        : 'Für diese Übung gibt es noch keine Einträge.');
+      content = h('p', { class: 'chart-empty' }, inRange.length
+        ? 'Dafür fehlt die Geschwindigkeit – trag sie beim Training mit ein.'
+        : all.length
+          ? 'Keine Einträge im gewählten Zeitraum – wähle oben einen längeren.'
+          : 'Für diese Übung gibt es noch keine Einträge.');
     } else {
       const values = sessions.map(metric.get);
       const lastValue = values[values.length - 1];
@@ -931,7 +1007,7 @@
         label: metric.title + ' für ' + exercise.name + ', ' + plural(sessions.length, 'Training', 'Trainings') +
           '. Zuletzt ' + metric.fmt(lastValue) + ', Bestwert ' + metric.fmt(bestValue) + '.',
         points: sessions.map((s) => ({
-          x: S.dayNumber(s.date), value: metric.get(s), title: fmtDate('shortYear', s.date), detail: summarizeSets(s.sets),
+          x: S.dayNumber(s.date), value: metric.get(s), title: fmtDate('shortYear', s.date), detail: summarizeSets(s.sets, type),
         })),
         formatValue: metric.fmt,
         formatTick: metric.tick,
@@ -946,7 +1022,7 @@
             sessions.length > 1 ? pct || 'seit ' + fmtDate('tick', sessions[0].date) : 'ab 2 Trainings')),
         h('p', { class: 'chart-title' }, metric.title),
         box,
-        tableDetails(['Datum', 'Sätze', metric.label], sessions.slice().reverse().map((s) => [fmtDate('shortYear', s.date), summarizeSets(s.sets), metric.fmt(metric.get(s))])),
+        tableDetails(['Datum', 'Einträge', metric.label], sessions.slice().reverse().map((s) => [fmtDate('shortYear', s.date), summarizeSets(s.sets, type), metric.fmt(metric.get(s))])),
       ];
     }
 
@@ -960,7 +1036,7 @@
     const rows = S.muscleSetCounts(state, from, today);
     const max = rows.length ? rows[0].count : 0;
     return h('section', { class: 'card' },
-      cardHead('Sätze pro Muskelgruppe', range.title),
+      cardHead('Sätze pro Gruppe', range.title),
       rows.length ? h('div', { class: 'hbars' }, rows.map((r) =>
         h('div', { class: 'hbar' },
           h('span', { class: 'hbar-label' }, r.label),
@@ -1026,7 +1102,7 @@
     const yes = await confirmDialog({
       title: 'Backup einspielen?',
       text: 'Deine aktuellen Daten werden durch das Backup ersetzt (' + plural(incoming.exercises.length, 'Übung', 'Übungen') + ', ' +
-        plural(incoming.sets.length, 'Satz', 'Sätze') + ').',
+        plural(incoming.sets.length, 'Eintrag', 'Einträge') + ').',
       ok: 'Ersetzen', danger: true,
     });
     if (!yes) return;
@@ -1048,7 +1124,7 @@
     const visits = S.visitDates(state).length;
     openSheet('Daten & Backup', h('div', { class: 'menu' },
       h('p', { class: 'muted' }, 'Deine Daten liegen nur in diesem Browser auf diesem Gerät. Sichere sie ab und zu als Datei – so kannst du sie auch auf ein anderes Gerät mitnehmen.'),
-      h('p', { class: 'data-stats' }, plural(state.exercises.length, 'Übung', 'Übungen') + ' · ' + plural(state.sets.length, 'Satz', 'Sätze') + ' · ' + plural(visits, 'Gym-Besuch', 'Gym-Besuche')),
+      h('p', { class: 'data-stats' }, plural(state.exercises.length, 'Übung', 'Übungen') + ' · ' + plural(state.sets.length, 'Eintrag', 'Einträge') + ' · ' + plural(visits, 'Gym-Besuch', 'Gym-Besuche')),
       menuItem('download', 'Backup herunterladen', exportData),
       menuItem('upload', 'Backup einspielen', () => file.click()),
       menuItem('list', 'Beispielübungen laden', () => {

@@ -9,7 +9,7 @@ function seed() {
   const squat = S.addExercise(state, { name: 'Kniebeugen', muscle: 'beine' });
   let ts = 1;
   const log = (ex, date, weight, reps) => {
-    const set = S.addSet(state, { exerciseId: ex.id, date, weight, reps });
+    const set = S.addSet(state, { exerciseId: ex.id, date }, { weight, reps });
     set.ts = ts++;
     return set;
   };
@@ -135,6 +135,9 @@ test('exercises are grouped by muscle group in fixed order and sorted by name', 
   assert.deepEqual(groups[0].exercises.map((e) => e.name), ['bankdrücken', 'Butterfly']);
   assert.ok(S.findExerciseByName(state, '  BANKDRÜCKEN '));
   assert.equal(S.addSamples(state), S.SAMPLE_EXERCISES.length - 3);
+  assert.equal(S.findExerciseByName(state, 'Liegestütze').type, 'reps');
+  assert.equal(S.findExerciseByName(state, 'Laufband').type, 'cardio');
+  assert.equal(S.groupedExercises(state).at(-1).muscle.id, 'cardio');
 });
 
 test('deleting an exercise removes its sets and the visits that depended on them', () => {
@@ -185,7 +188,7 @@ test('normalize drops broken records and rejects foreign files', () => {
       { id: '6', exerciseId: 'a', date: '2026-11-02', weight: '0', reps: 12 },
     ],
   });
-  assert.deepEqual(clean.exercises.map((e) => [e.id, e.name, e.muscle]), [['a', 'Latzug', 'ruecken'], ['b', 'Unbekannte Gruppe', 'sonstiges']]);
+  assert.deepEqual(clean.exercises.map((e) => [e.id, e.name, e.muscle, e.type]), [['a', 'Latzug', 'ruecken', 'weight'], ['b', 'Unbekannte Gruppe', 'sonstiges', 'weight']]);
   assert.deepEqual(clean.sets.map((s) => s.id), ['1', '6']);
   assert.equal(clean.sets[1].weight, 0);
 });
@@ -200,4 +203,38 @@ test('load keeps a copy of unreadable data instead of overwriting it', () => {
   log(bench, '2026-11-01', 60, 10);
   assert.equal(S.save(state, storage), true);
   assert.deepEqual(S.load(storage), state);
+});
+
+test('repetition-only exercises ignore weight and track counts', () => {
+  const state = S.emptyState();
+  const pushups = S.addExercise(state, { name: 'Liegestütze', muscle: 'brust', type: 'reps' });
+  assert.equal(S.addSet(state, { exerciseId: pushups.id, date: '2026-11-10' }, { reps: 0 }), null);
+  const set = S.addSet(state, { exerciseId: pushups.id, date: '2026-11-10' }, { reps: 20, weight: 99 });
+  assert.equal(set.weight, 0);
+  S.addSet(state, { exerciseId: pushups.id, date: '2026-11-10' }, { reps: 15 });
+  const [day] = S.exerciseSessions(state, pushups.id);
+  assert.equal(day.maxReps, 20);
+  assert.equal(day.totalReps, 35);
+  assert.deepEqual(S.visitDates(state), ['2026-11-10']);
+});
+
+test('cardio entries record minutes with an optional speed', () => {
+  const state = S.emptyState();
+  const run = S.addExercise(state, { name: 'Laufband', muscle: 'cardio', type: 'cardio' });
+  const at = { exerciseId: run.id, date: '2026-11-10' };
+  assert.equal(S.addSet(state, at, { minutes: 0 }), null);
+  assert.equal(S.addSet(state, at, { minutes: 20, speed: -1 }), null);
+  const plain = S.addSet(state, at, { minutes: 20 });
+  assert.equal(plain.speed, null);
+  S.addSet(state, at, { minutes: 30, speed: 10 });
+  const [day] = S.exerciseSessions(state, run.id);
+  assert.equal(day.minutes, 50);
+  assert.equal(day.maxSpeed, 10);
+  assert.equal(day.distance, 5); // only the entry with a speed counts
+  assert.equal(S.updateSet(state, plain.id, { minutes: 25, speed: 8 }).speed, 8);
+  assert.equal(S.hasVisit(state, '2026-11-10'), true);
+  assert.equal(S.prSetId(state, run.id, '2026-11-10'), null);
+  // survives a save/load round trip, and the type is locked once entries exist
+  assert.deepEqual(S.normalize(JSON.parse(JSON.stringify(state))), state);
+  assert.equal(S.updateExercise(state, run.id, { type: 'weight' }).type, 'cardio');
 });

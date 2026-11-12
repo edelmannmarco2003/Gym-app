@@ -207,8 +207,7 @@ h1 {
 .chips-wrap { flex-wrap: wrap; margin: 0; padding: 0; overflow: visible; }
 .card .chips { margin: 0 -14px; padding: 2px 14px; }
 
-.chip,
-.chip-radio span {
+.chip {
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -222,17 +221,13 @@ h1 {
   font-weight: 600;
   white-space: nowrap;
 }
-.chip[aria-pressed="true"],
-.chip-radio input:checked + span {
+.chip[aria-pressed="true"] {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--accent-ink);
 }
 .chip:disabled { opacity: 0.4; }
 .chip-center { justify-self: center; }
-.chip-radio { position: relative; cursor: pointer; }
-.chip-radio input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
-.chip-radio input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ---------- cards ---------- */
 
@@ -402,6 +397,7 @@ h1 {
 
 .entry { display: grid; gap: 8px; }
 .entry-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.entry-fields.is-single { grid-template-columns: minmax(0, 1fr); }
 @media (max-width: 350px) {
   .entry-fields { grid-template-columns: minmax(0, 1fr); }
 }
@@ -447,7 +443,7 @@ h1 {
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
-.stepper-input::placeholder { color: var(--text-3); }
+.stepper-input::placeholder { color: var(--text-3); font-size: 15px; font-weight: 600; }
 .stepper-unit {
   color: var(--text-2);
   font-size: 10px;
@@ -466,6 +462,36 @@ h1 {
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
+
+/* Muscle group as a dropdown on the exercises tab */
+.group-drop { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+.group-drop summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 0 14px;
+  font-size: 17px;
+  font-weight: 800;
+  cursor: pointer;
+  list-style: none;
+}
+.group-drop summary::-webkit-details-marker { display: none; }
+.group-drop summary:focus-visible { outline-offset: -3px; }
+.group-name { flex: 1; min-width: 0; }
+.group-count {
+  min-width: 26px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 13px;
+  text-align: center;
+}
+.group-drop summary .icon { color: var(--accent); transition: transform 0.15s; }
+.group-drop[open] summary .icon { transform: rotate(180deg); }
+.group-drop[open] summary { border-bottom: 1px solid var(--line); }
+.group-drop .rows { border: 0; border-radius: 0; }
 
 .rows {
   border: 1px solid var(--line);
