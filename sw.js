@@ -6,7 +6,7 @@
  * VERSION must change whenever one of the files below changes: run `node tests/sw-version.test.js --write`
  * (the test suite fails if it is out of date).
  */
-const VERSION = '66ccb545494b';
+const VERSION = '28c5a22927fc';
 const PREFIX = 'gym-tracker-';
 const CACHE = PREFIX + VERSION;
 const ASSETS = [

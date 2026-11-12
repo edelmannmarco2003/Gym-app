@@ -28,7 +28,9 @@ Die App ist eine reine Web-App ohne Server und ohne Build-Schritt. Alle Daten bl
 - Sätze pro Muskelgruppe
 
 **Daten & Backup** (Symbol oben rechts)
-- Backup als JSON-Datei herunterladen und wieder einspielen, z. B. beim Gerätewechsel
+- Backup sichern: Auf dem iPhone öffnet sich das Teilen-Menü, dort „In Dateien sichern“ wählen. Die Datei heißt „Gym-Backup JJJJ-MM-TT.json“
+- Gibt es Einträge, die noch in keinem Backup sind, erinnert ein Hinweis mit „Sichern“-Knopf unten im Training-Tab
+- Backup wieder einspielen, z. B. beim Gerätewechsel
 
 ## Benutzen
 

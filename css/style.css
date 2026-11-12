@@ -347,6 +347,10 @@ h1 {
   color: var(--text);
 }
 .banner.is-on .icon { color: var(--accent); }
+.banner-backup { border-style: solid; color: var(--text); }
+.banner-backup > span { flex: 1; min-width: 0; }
+.banner-backup .icon { color: var(--accent); }
+.banner-backup .btn { flex: none; min-height: 36px; }
 
 .last-time { color: var(--text-2); font-size: 13px; }
 .last-time span { color: var(--text-3); }

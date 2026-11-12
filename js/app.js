@@ -6,6 +6,7 @@
   const C = window.GymCharts;
   const UI_KEY = 'gymtracker.ui';
   const TAB_KEY = 'gymtracker.tab';
+  const BACKUP_KEY = 'gymtracker.backup'; // { lastChange, lastBackup } as timestamps
 
   const TABS = [
     { id: 'training', label: 'Training', icon: 'dumbbell' },
@@ -220,7 +221,41 @@
   // Persist the data and redraw.
   function commit() {
     if (!S.save(state)) toast('Speichern fehlgeschlagen – der Browser-Speicher ist voll oder gesperrt.');
+    else setBackupInfo({ lastChange: Date.now() });
     render();
+  }
+
+  // ---------- backup bookkeeping ----------
+
+  function backupInfo() {
+    try {
+      return JSON.parse(localStorage.getItem(BACKUP_KEY)) || {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function setBackupInfo(patch) {
+    try {
+      localStorage.setItem(BACKUP_KEY, JSON.stringify(Object.assign(backupInfo(), patch)));
+    } catch (e) { /* only drives the reminder */ }
+  }
+
+  // True when there is data that no backup contains yet.
+  function backupDue() {
+    if (!state.sets.length) return false;
+    const info = backupInfo();
+    // Without any backup yet, existing data (also from older app versions) is unsaved.
+    if (!info.lastBackup) return true;
+    return (info.lastChange || 0) > info.lastBackup;
+  }
+
+  const lowerFirst = (text) => text.charAt(0).toLowerCase() + text.slice(1);
+
+  function backupWhen(ts) {
+    const key = S.dateKey(new Date(ts));
+    const time = new Date(ts).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    return relativeDay(key, S.todayKey()) + ', ' + time + ' Uhr';
   }
 
   // ---------- toast ----------
@@ -754,7 +789,9 @@
       cards.length ? cards : h('div', { class: 'empty' },
         h('h2', null, date === today ? 'Bereit fürs Training?' : 'Kein Training an diesem Tag'),
         h('p', null, 'Füge eine Übung hinzu und trag Gewicht und Wiederholungen ein.')),
-      h('button', { class: 'btn btn-block ' + (cards.length ? 'btn-secondary' : 'btn-primary'), type: 'button', onclick: openExercisePicker }, icon('plus'), 'Übung hinzufügen'));
+      h('button', { class: 'btn btn-block ' + (cards.length ? 'btn-secondary' : 'btn-primary'), type: 'button', onclick: openExercisePicker }, icon('plus'), 'Übung hinzufügen'),
+      // After the workout: one tap to save everything to Files.
+      backupBanner());
   }
 
   // ---------- exercises tab ----------
@@ -1107,14 +1144,43 @@
 
   // ---------- settings ----------
 
-  function exportData() {
+  // On the iPhone this opens the share sheet ("In Dateien sichern"); elsewhere it downloads the file.
+  async function exportData() {
     const payload = Object.assign({ app: 'gym-tracker', exportedAt: new Date().toISOString() }, state);
-    const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
-    const link = h('a', { href: url, download: 'gym-tracker-' + S.todayKey() + '.json' });
+    const name = 'Gym-Backup ' + S.todayKey() + '.json';
+    const file = new File([JSON.stringify(payload, null, 2)], name, { type: 'application/json' });
+    const done = () => {
+      setBackupInfo({ lastBackup: Date.now() });
+      render();
+      if (sheet.open) openSettings();
+    };
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file] });
+        done();
+        toast('Backup gesichert');
+        return;
+      } catch (err) {
+        if (err.name === 'AbortError') return; // closed the share sheet without saving
+        // Sharing not possible right now: fall back to a download.
+      }
+    }
+    const url = URL.createObjectURL(file);
+    const link = h('a', { href: url, download: name });
     document.body.append(link);
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
+    done();
+  }
+
+  function backupBanner() {
+    if (!backupDue()) return null;
+    const info = backupInfo();
+    return h('div', { class: 'banner banner-backup' }, icon('upload', 18),
+      h('span', null, h('strong', null, 'Noch nicht gesichert'), ' · ',
+        info.lastBackup ? 'letztes Backup ' + lowerFirst(backupWhen(info.lastBackup)) : 'noch kein Backup'),
+      h('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: exportData }, 'Sichern'));
   }
 
   async function importData(file) {
@@ -1151,7 +1217,8 @@
     openSheet('Daten & Backup', h('div', { class: 'menu' },
       h('p', { class: 'muted' }, 'Deine Daten liegen nur in diesem Browser auf diesem Gerät. Sichere sie ab und zu als Datei – so kannst du sie auch auf ein anderes Gerät mitnehmen.'),
       h('p', { class: 'data-stats' }, plural(state.exercises.length, 'Übung', 'Übungen') + ' · ' + plural(state.sets.length, 'Eintrag', 'Einträge') + ' · ' + plural(visits, 'Gym-Besuch', 'Gym-Besuche')),
-      menuItem('download', 'Backup herunterladen', exportData),
+      h('p', { class: 'muted' }, backupInfo().lastBackup ? 'Letztes Backup: ' + backupWhen(backupInfo().lastBackup) : 'Noch kein Backup gemacht.'),
+      menuItem('download', 'Backup sichern (z. B. in Dateien)', exportData),
       menuItem('upload', 'Backup einspielen', () => file.click()),
       menuItem('list', 'Beispielübungen laden', () => {
         closeSheet();
