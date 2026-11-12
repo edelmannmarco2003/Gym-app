@@ -201,16 +201,18 @@
     calMonth: startDay.slice(0, 7),
     range: RANGES.some((r) => r.id === saved.range) ? saved.range : '3m',
     metrics: Object.assign({ weight: 'weight', reps: 'reps', cardio: 'minutes' }, saved.metrics), // chosen chart metric per type
-    openGroups: new Set(),   // expanded muscle groups on the exercises tab
+    muscleFilter: 'all',     // group shown on the exercises tab
+    collapsed: {},           // "date|exerciseId" -> true for folded exercise cards on the training tab
     progressExercise: saved.progressExercise || null,
     flashSet: null,
   };
   if (saved.drafts && Array.isArray(saved.drafts[startDay])) ui.drafts[startDay] = saved.drafts[startDay];
+  for (const key of Object.keys(saved.collapsed || {})) if (key.startsWith(startDay + '|')) ui.collapsed[key] = true;
 
   function saveUi() {
     try {
       localStorage.setItem(UI_KEY, JSON.stringify({
-        drafts: ui.drafts, range: ui.range, metrics: ui.metrics, progressExercise: ui.progressExercise,
+        drafts: ui.drafts, collapsed: ui.collapsed, range: ui.range, metrics: ui.metrics, progressExercise: ui.progressExercise,
       }));
     } catch (e) { /* view preferences are not essential */ }
   }
@@ -244,7 +246,7 @@
       }, action) : null);
     el.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(hideToast, action ? 6000 : 3200);
+    toastTimer = setTimeout(hideToast, (opts && opts.duration) || (action ? 6000 : 3200));
   }
 
   // ---------- sheet (bottom dialog) ----------
@@ -610,15 +612,36 @@
     const recordId = S.prSetId(state, exercise.id, date);
     const muscle = S.MUSCLES.find((m) => m.id === exercise.muscle);
 
-    return h('section', { class: 'card exercise-card', 'aria-label': exercise.name },
-      h('div', { class: 'card-head' },
-        h('div', { class: 'card-titles' },
+    // Tapping the name folds the card down to a one-line summary.
+    const collapsed = !!ui.collapsed[key];
+    const head = h('div', { class: 'card-head' },
+      h('button', {
+        class: 'card-toggle', type: 'button', 'aria-expanded': String(!collapsed), 'data-fk': 'toggle-' + exercise.id,
+        onclick: () => {
+          if (collapsed) delete ui.collapsed[key];
+          else ui.collapsed[key] = true;
+          saveUi();
+          render();
+        },
+      },
+        h('span', { class: 'card-titles' },
           h('span', { class: 'muscle-tag' }, muscle.label),
-          h('h3', null, exercise.name)),
-        h('button', {
-          class: 'icon-btn', type: 'button', 'aria-label': 'Mehr zu ' + exercise.name,
-          onclick: () => openCardMenu(exercise, sets, date),
-        }, icon('more', 22))),
+          h('span', { class: 'card-name' }, exercise.name)),
+        icon('chevronDown', 20)),
+      h('button', {
+        class: 'icon-btn', type: 'button', 'aria-label': 'Mehr zu ' + exercise.name,
+        onclick: () => openCardMenu(exercise, sets, date),
+      }, icon('more', 22)));
+    if (collapsed) {
+      return h('section', { class: 'card exercise-card is-collapsed', 'aria-label': exercise.name },
+        head,
+        h('p', { class: 'last-time' }, sets.length
+          ? plural(sets.length, noun, type === 'cardio' ? 'Einträge' : 'Sätze') + ' · ' + summarizeSets(sets, type)
+          : 'Noch nichts eingetragen'));
+    }
+
+    return h('section', { class: 'card exercise-card', 'aria-label': exercise.name },
+      head,
       last ? h('p', { class: 'last-time' }, h('span', null, 'Letztes Mal · ' + fmtDate('short', last.date) + ': '), summarizeSets(last.sets, type)) : null,
       sets.length ? h('ol', { class: 'sets' }, sets.map((s, i) =>
         h('li', { class: 'set' + (s.id === ui.flashSet ? ' flash' : '') },
@@ -779,7 +802,6 @@
         if (S.findExerciseByName(state, cleanName, exercise && exercise.id)) return fail('Eine Übung mit diesem Namen gibt es schon.', name);
         const data = { name: cleanName, muscle: muscle.value, type: type.value };
         const result = exercise ? S.updateExercise(state, exercise.id, data) : S.addExercise(state, data);
-        ui.openGroups.add(result.muscle);
         if (onSaved) onSaved(result);
         closeSheet();
         commit();
@@ -860,34 +882,38 @@
           h('button', { class: 'btn btn-secondary btn-block', type: 'button', onclick: loadSamples }, 'Beispielübungen laden')));
     }
     const summary = S.summaries(state);
+    const filter = groups.some((g) => g.muscle.id === ui.muscleFilter) ? ui.muscleFilter : 'all';
+    const shown = filter === 'all' ? groups : groups.filter((g) => g.muscle.id === filter);
+
+    const select = h('select', { class: 'input select', 'aria-label': 'Gruppe anzeigen', 'data-fk': 'muscle-filter' },
+      h('option', { value: 'all' }, 'Alle Gruppen (' + total + ')'),
+      groups.map((g) => h('option', { value: g.muscle.id }, g.muscle.label + ' (' + g.exercises.length + ')')));
+    select.value = filter;
+    select.addEventListener('change', () => {
+      ui.muscleFilter = select.value;
+      render();
+    });
 
     return h('div', { class: 'view' },
       h('div', { class: 'view-head' },
         h('h1', null, 'Übungen'),
-        h('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: () => openExerciseForm({}) }, icon('plus', 18), 'Neue Übung')),
-      // One dropdown per group; they remember whether they are open.
-      groups.map((g) => {
-        const details = h('details', { class: 'group-drop', open: ui.openGroups.has(g.muscle.id) },
-          h('summary', { 'data-fk': 'group-' + g.muscle.id },
-            h('span', { class: 'group-name' }, g.muscle.label),
-            h('span', { class: 'group-count' }, g.exercises.length),
-            icon('chevronDown', 20)),
-          h('div', { class: 'rows' }, g.exercises.map((ex) => {
-            const sum = summary.get(ex.id);
-            return h('button', { class: 'row', type: 'button', onclick: () => openExerciseDetail(ex) },
-              h('span', { class: 'row-text' },
-                h('span', { class: 'row-title' }, ex.name),
-                h('span', { class: 'row-sub' }, sum
-                  ? 'Zuletzt ' + fmtDate('short', sum.lastDate) + ' · ' + formatSet(ex.type, sum.lastTop)
-                  : 'Noch nicht trainiert')),
-              icon('chevronRight', 18));
-          })));
-        details.addEventListener('toggle', () => {
-          if (details.open) ui.openGroups.add(g.muscle.id);
-          else ui.openGroups.delete(g.muscle.id);
-        });
-        return details;
-      }));
+        h('button', {
+          class: 'btn btn-primary btn-sm', type: 'button',
+          onclick: () => openExerciseForm({ presetMuscle: filter === 'all' ? null : filter }),
+        }, icon('plus', 18), 'Neue Übung')),
+      select,
+      shown.map((g) => h('section', { class: 'group' },
+        h('h2', { class: 'group-title' }, g.muscle.label),
+        h('div', { class: 'rows' }, g.exercises.map((ex) => {
+          const sum = summary.get(ex.id);
+          return h('button', { class: 'row', type: 'button', onclick: () => openExerciseDetail(ex) },
+            h('span', { class: 'row-text' },
+              h('span', { class: 'row-title' }, ex.name),
+              h('span', { class: 'row-sub' }, sum
+                ? 'Zuletzt ' + fmtDate('short', sum.lastDate) + ' · ' + formatSet(ex.type, sum.lastTop)
+                : 'Noch nicht trainiert')),
+            icon('chevronRight', 18));
+        })))));
   }
 
   // ---------- progress tab ----------
@@ -1204,7 +1230,12 @@
     });
 
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+      const hadWorker = !!navigator.serviceWorker.controller;
       window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+      // A new version has been downloaded completely and takes over from the next start.
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (hadWorker) toast('Neue Version geladen', { action: 'Jetzt neu starten', onAction: () => location.reload(), duration: 15000 });
+      });
     }
   }
 

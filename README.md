@@ -11,11 +11,12 @@ Die App ist eine reine Web-App ohne Server und ohne Build-Schritt. Alle Daten bl
 - Die Felder sind mit dem letzten Satz vorbelegt, darüber stehen die Werte vom letzten Mal
 - Sätze antippen zum Ändern, löschen mit „Rückgängig“
 - Neue Bestgewichte werden als Rekord markiert
+- Tipp auf den Übungsnamen klappt die Übung ein und wieder aus
 - Vergangene Tage lassen sich über die Pfeile, das Datum oder den Kalender nachtragen
 
 **Übungen**
 - Eigene Übungen anlegen, umbenennen, löschen
-- Sortiert nach Gruppe (Brust, Rücken, Schultern, Bizeps, Trizeps, Unterarme, Bauch, Beine, Gesäß, Waden, Cardio, Sonstiges); jede Gruppe ist ein aufklappbares Dropdown
+- Sortiert nach Gruppe (Brust, Rücken, Schultern, Bizeps, Trizeps, Unterarme, Bauch, Beine, Gesäß, Waden, Cardio, Sonstiges); die Gruppe wird über ein Dropdown-Feld gewählt, in der Liste wie beim Anlegen
 - Pro Übung wählbar, was eingetragen wird: Gewicht + Wiederholungen, nur Wiederholungen (z. B. Liegestütze) oder Zeit mit optionaler Geschwindigkeit (Cardio)
 - Optional: Startauswahl gängiger Übungen laden
 
@@ -39,13 +40,14 @@ Die App muss über eine Webadresse erreichbar sein, zum Beispiel mit GitHub Page
 
 Gut zu wissen:
 - Die Daten gehören zu Browser und Gerät. Wer den Browser wechselt oder die Website-Daten löscht, braucht ein Backup.
-- Nach einem Update zeigt die App die neue Version beim zweiten Öffnen.
+- Ein Update wird im Hintergrund vollständig geladen; die App meldet „Neue Version geladen“ und zeigt sie nach dem Neustart.
 
 ## Entwicklung
 
 ```bash
 python3 -m http.server 8000   # danach http://localhost:8000 öffnen
 node --test                   # Tests für Datenmodell und Statistik
+node tests/sw-version.test.js --write   # nach jeder Änderung: Versionsnummer für den Offline-Speicher setzen
 ```
 
 | Datei | Inhalt |

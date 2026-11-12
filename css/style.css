@@ -252,6 +252,25 @@ h1 {
 .card-actions { display: flex; flex: none; margin: -8px -8px -8px 0; }
 .card-head > .icon-btn { margin: -8px -8px -8px 0; }
 
+/* Exercise name on the training tab: tap to fold the card */
+.card-toggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: -6px 0 -6px -6px;
+  padding: 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  text-align: left;
+}
+.card-toggle .card-titles { display: block; }
+.card-name { display: block; font-size: 18px; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
+.card-toggle .icon { color: var(--accent); transition: transform 0.15s; }
+.card-toggle[aria-expanded="true"] .icon { transform: rotate(180deg); }
+
 .muscle-tag {
   display: block;
   color: var(--accent);
@@ -462,36 +481,6 @@ h1 {
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
-
-/* Muscle group as a dropdown on the exercises tab */
-.group-drop { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
-.group-drop summary {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 56px;
-  padding: 0 14px;
-  font-size: 17px;
-  font-weight: 800;
-  cursor: pointer;
-  list-style: none;
-}
-.group-drop summary::-webkit-details-marker { display: none; }
-.group-drop summary:focus-visible { outline-offset: -3px; }
-.group-name { flex: 1; min-width: 0; }
-.group-count {
-  min-width: 26px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--surface-2);
-  color: var(--text-2);
-  font-size: 13px;
-  text-align: center;
-}
-.group-drop summary .icon { color: var(--accent); transition: transform 0.15s; }
-.group-drop[open] summary .icon { transform: rotate(180deg); }
-.group-drop[open] summary { border-bottom: 1px solid var(--line); }
-.group-drop .rows { border: 0; border-radius: 0; }
 
 .rows {
   border: 1px solid var(--line);

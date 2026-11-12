@@ -1,6 +1,14 @@
-/* Gym Tracker – offline support. Cached files are served immediately and refreshed in the background. */
+/* Gym Tracker – offline support.
+ *
+ * Every release is one complete, separate cache. A new version is downloaded in full in the
+ * background and only then replaces the old one, so the app never runs a mix of old and new files.
+ *
+ * VERSION must change whenever one of the files below changes: run `node tests/sw-version.test.js --write`
+ * (the test suite fails if it is out of date).
+ */
+const VERSION = '66ccb545494b';
 const PREFIX = 'gym-tracker-';
-const CACHE = PREFIX + 'v1';
+const CACHE = PREFIX + VERSION;
 const ASSETS = [
   './',
   'index.html',
@@ -16,7 +24,12 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
+  // 'reload' skips the browser's HTTP cache, so the new cache really holds the new files.
+  event.waitUntil(
+    caches.open(CACHE)
+      .then((cache) => cache.addAll(ASSETS.map((url) => new Request(url, { cache: 'reload' }))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (event) => {
@@ -31,18 +44,8 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
-
-  event.respondWith((async () => {
-    const cache = await caches.open(CACHE);
-    const cached = await cache.match(request, { ignoreSearch: true });
-    const refresh = fetch(request).then((response) => {
-      if (response.ok) cache.put(request, response.clone());
-      return response;
-    });
-    if (cached) {
-      event.waitUntil(refresh.catch(() => {}));
-      return cached;
-    }
-    return refresh;
-  })());
+  // caches.match (unlike caches.open) never re-creates a cache that a newer version just removed.
+  event.respondWith(
+    caches.match(request, { cacheName: CACHE, ignoreSearch: true }).then((cached) => cached || fetch(request))
+  );
 });
